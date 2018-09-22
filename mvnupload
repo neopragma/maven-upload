@@ -1,0 +1,168 @@
+#!/bin/bash
+#------------------------------------------------------------
+# mvnupload
+# Upload maven artifacts to Nexus
+# Version 1.0.0
+# 21 March 2018
+# Author: Dave Nicolette
+# dave.nicolette@leadingagile.com
+#------------------------------------------------------------
+
+function show_help {
+	echo 
+	echo 'mvnupload'
+	echo 'Calls mvn deploy to upload an artifact from the current project'
+	echo 'to load a Nexus server for LeadingAgile technical workshops.'
+	echo '(Not a general-purpose utility)'
+	echo
+	echo 'Arguments:'
+	echo '  -g|--group-id    Group Id (required)'
+	echo '  -a|--artifact-id Artifact Id (required)'
+	echo '  -v|--version     Version (of the artifact) (required)'
+	echo '  -c|--classifier  Classifier, if any'
+	echo '  -p|--packaging   Packaging (default = jar)'
+	echo '  -r|--repository  Repository (default = http://172.16.4.1:8081/repository/maven-releases)'
+	echo '  -h|--help        Display this help'
+	echo '     --verbose     Detailed output'
+	echo "  -n|--dry-run     Says what it would have done, but doesn't (implies verbose)"
+  echo '  -t|--temp-dir    Temporary directory for copying files (default = $HOME/tmp)'
+  echo "  -s|--create-settings-xml"
+  echo "                   Creates a settings.xml file identifying the target Nexus repository"
+	echo 
+	echo 'Notes:'
+	echo "  (1) $HOME/.m2/settings.xml must have a <server> entry with <id>leadingagile</id>"
+	echo "  (2) You must run this as a Maven project, in a directory that contains a pom.xml file"
+  echo "  (3) At some point, some project must have run 'mvn install' to put the artifacts in the local repo"
+	echo 
+}
+
+function show_options_in_effect {
+  echo 'Options in effect:'
+  echo "  VERBOSE=$VERBOSE"
+  echo "  DRY_RUN=$DRY_RUN"
+  echo "  GROUP_ID=$GROUP_ID"
+  echo "  ARTIFACT_ID=$ARTIFACT_ID"
+  echo "  VERSION=$VERSION"
+  echo "  CLASSIFIER=$CLASSIFIER"
+  echo "  artifact=$SRCFILE.$PACKAGING"
+  echo "  pom=$SRCFILE.pom"
+  echo "  REPOSITORY=$REPOSITORY"
+  echo "  TMPDIR=$TMPDIR"
+}
+
+function check_required_argument {
+  if [ -z "$2" ]; then 
+  	TMP="$1"
+    echo "  argument $1 is required"
+    show_help
+    exit 1
+  fi 
+}
+
+function create_settings_xml {
+  if [ -e "$HOME/.m2/settings.xml" ]; then 
+    echo "Copying existing $HOME/.m2/settings.xml file to $HOME/.m2/settings-xml.orig"
+    cp "$HOME/.m2/settings.xml" "$HOME/.m2/settings-xml.orig"
+  fi 
+  FN="$HOME/.m2/settings.xml"
+  echo "$HOME/.m2/settings.xml with server id 'leadingagile' and default userid/password"
+  echo '<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"' > "$FN"
+  echo '    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' >> "$FN"
+  echo '    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0' >> "$FN"
+  echo '    https://maven.apache.org/xsd/settings-1.0.0.xsd">' >> "$FN"
+  echo '  <servers>' >> "$FN"
+  echo '    <server>' >> "$FN"
+  echo '      <id>leadingagile</id>' >> "$FN"
+  echo '      <username>admin</username>' >> "$FN"
+  echo '      <password>admin123</password>' >> "$FN"
+  echo '    </server>' >> "$FN"
+  echo '  </servers>' >> "$FN"
+  echo '</settings>' >> "$FN"
+}
+
+function show_command {
+  echo 
+  echo "$0 dry run! This is the command the script built:"
+  echo 
+  echo "mvn deploy:deploy-file -DgroupId=\"$GROUP_ID\" \ "
+  echo "    -DartifactId=\"$ARTIFACT_ID\" \ "
+  echo "    -Dversion=\"$VERSION$SEPARATOR$CLASSIFIER\" \ "
+  echo "    -Dpackaging=\"$PACKAGING\" \ "
+  echo "    -DrepositoryId=leadingagile \ "
+  echo "    -Durl=\"$REPOSITORY\" \ "
+  echo "    -Dfile=\"$SRCFILE.$PACKAGING\" \ "
+  echo "    -DpomFile=\"$SRCFILE.pom\" \ "
+  echo "    -DaltDeploymentRepository=leadingagile::default::\"$REPOSITORY\" "
+  echo
+}
+
+function run_command { 
+  echo 'Copying artifact and pom to tmp directory to work around Maven deploy bug'
+  cp "$SRCFILE.$PACKAGING" "$TMPDIR/."
+  cp "$SRCFILE.pom" "$TMPDIR/."
+
+  mvn deploy:deploy-file -DgroupId="$GROUP_ID" \
+      -DartifactId="$ARTIFACT_ID" \
+      -Dversion="$VERSION$SEPARATOR$CLASSIFIER" \
+      -Dpackaging="$PACKAGING" \
+      -DrepositoryId=leadingagile \
+      -Durl="$REPOSITORY" \
+      -Dfile="$TMPFILE.$PACKAGING" \
+      -DpomFile="$TMPFILE.pom" \
+      -DaltDeploymentRepository=leadingagile::default::"$REPOSITORY"
+}
+
+OPTS=`getopt -o hvng:a:v:c:p:r:t:s --long help,verbose,dry-run,group-id:,artifact-id:,version:,classifier:,packaging:,repository:,temp-dir:,create-settings-xml -n 'parse-options' -- "$@"`
+
+if [ $? != 0 ] ; then 
+  show_help; 
+  exit 1; 
+fi
+
+eval set -- "$OPTS"
+
+# Default values
+VERBOSE=
+DRY_RUN=
+SRCDIR="$HOME/.m2/repository"
+TMPDIR="$HOME/tmp"
+PACKAGING="jar"
+REPOSITORY="http://172.16.4.1:8081/repository/maven-releases"
+
+while true; do
+  case "$1" in 
+  	-h | --help )        show_help; exit 0 ;;
+         --verbose )     VERBOSE=true; shift ;;
+    -n | --dry-run )     DRY_RUN=true; VERBOSE=true; shift ;;
+    -g | --group-id )    GROUP_ID="$2"; shift; shift ;;
+    -a | --artifact-id ) ARTIFACT_ID="$2"; shift; shift ;;
+    -v | --version )     VERSION="$2"; shift; shift ;; 
+    -c | --classifier )  CLASSIFIER="$2"; shift; shift ;;
+    -p | --packaging )   PACKAGING="$2"; shift; shift ;;
+    -r | --repository )  REPOSITORY="$2"; shift; shift ;;
+    -t | --temp-dir )    TMPDIR="$2"; shift; shift ;;
+    -s | --create-settings-xml ) CREATE_SETTINGS_XML=true; shift ;;
+    -- ) shift; break ;;
+    * ) break ;;
+  esac 
+done 
+
+check_required_argument '--group-id' "$GROUP_ID"
+check_required_argument '--artifact-id' "$ARTIFACT_ID"
+check_required_argument '--version' "$VERSION"
+
+[[ ! -d "$TMPDIR" ]] && mkdir -p "$TMPDIR"
+
+IFS='.' read -ra PARTS <<< "$GROUP_ID"
+
+[[ -z "$CLASSIFIER" ]] && SEPARATOR= || SEPARATOR="-"
+
+SRCFILE="$SRCDIR/${PARTS[0]}/${PARTS[1]}/$ARTIFACT_ID/$VERSION$SEPARATOR$CLASSIFIER/$ARTIFACT_ID-$VERSION$SEPARATOR$CLASSIFIER"
+TMPFILE="$TMPDIR/$ARTIFACT_ID-$VERSION$SEPARATOR$CLASSIFIER"
+
+[[ "$VERBOSE" == true ]] && show_options_in_effect    
+[[ -n "$DRY_RUN" ]] && show_command && exit 0
+[[ -n "$CREATE_SETTINGS_XML" ]] && create_settings_xml
+run_command
+exit 0
+
